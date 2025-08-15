@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>oMeentor Dino</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="index.css">
+    <link rel="icon" href="assets/logo.png" type="image/png">
+</head>
+<body class="offline">
+
+    <!-- Login Screen -->
+    <div id="login-screen" style="display: flex;">
+        <div class="dialog">
+            <h1>Entrar</h1>
+            <p>Insira seu token de acesso, ou jogue como espectador.</p>
+            <input type="text" id="tokenInput" placeholder="Insira seu token">
+            
+            <button id="spectatorBtn">Modo Espectador</button>
+            <p id="loginError" style="display: none;">Token inválido. Por favor, tente novamente.</p>
+        </div>
+    </div>
+
+    <!-- Game Container -->
+    <div id="game-container" style="display: none;">
+        <div id="main-frame-error" class="interstitial-wrapper"></div>
+        <canvas id="game-canvas"></canvas>
+    </div>
+    
+    <!-- UI Elements -->
+    <div id="queue-info" style="display: none;">
+        <p>Você está na fila. Posição: <span id="queueCount">...</span></p>
+    </div>
+    
+    <div id="player-info" style="display: none;">
+        <p>Você é o jogador da vez!</p>
+    </div>
+
+    <div id="waiting-banner" class="banner" style="display: none;">
+      Aguardando sua vez...
+    </div>
+
+    <!-- Touch Controls -->
+    <div id="touch-control" style="display: none;">
+        <div id="jump-btn"></div>
+    </div>
+
+    <!-- Sprites -->
+    <div style="display: none;">
+        <img id="offline-resources-light-1x" src="assets/default_100_percent/100-offline-sprite.png">
+        <img id="offline-resources-light-2x" src="assets/default_200_percent/200-offline-sprite.png">
+    </div>
+
+    <script src="renderer.js"></script>
+    <script src="index.js"></script>
+    <script src="client.js"></script>
+    <script src="enhancements.js"></script>
+</body>
+</html>
