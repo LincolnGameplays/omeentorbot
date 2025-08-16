@@ -276,19 +276,28 @@ body::before {
 
 /* ===== Caixas de Status Melhoradas ===== */
 #queue-info, #waiting-banner {
-    background: rgba(255, 255, 255, 0.85);
+    background: rgba(0, 0, 0, 0.7);
     border-radius: 16px;
     padding: 1rem 1.5rem;
     backdrop-filter: blur(10px);
     -webkit-backdrop-filter: blur(10px);
-    box-shadow: 0 8px 25px rgba(35, 166, 213, 0.3);
+    box-shadow: 0 8px 25px rgba(0, 0, 0, 0.3);
     font-size: 1.1rem;
     font-weight: 600;
-    color: #333;
+    color: #fff;
     animation: fadeInUp 0.6s ease-out;
     max-width: 90%;
     margin: 1rem auto;
     text-align: center;
+}
+
+#queue-info p {
+    margin: 0.5rem 0;
+}
+
+#queue-info span {
+    font-weight: bold;
+    color: #3498db;
 }
 
 #game-container {

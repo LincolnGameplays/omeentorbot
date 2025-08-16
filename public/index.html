@@ -4,59 +4,72 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>oMeentor Dino</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="index.css">
-    <link rel="icon" href="assets/logo.png" type="image/png">
+    <style>
+        body {
+            background-color: #121212;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #login-container {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+        }
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #f3f3f3;
+            border-top: 5px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        .game-container {
+            display: none; /* Escondido por padrão */
+        }
+    </style>
 </head>
 <body class="offline">
-
-    <!-- Login Screen -->
-    <div id="login-screen" style="display: flex;">
-        <div class="dialog">
-            <h1>Entrar</h1>
-            <p>Insira seu token de acesso, ou jogue como espectador.</p>
-            <input type="text" id="tokenInput" placeholder="Insira seu token">
-            
-            <button id="spectatorBtn">Modo Espectador</button>
-            <p id="loginError" style="display: none;">Token inválido. Por favor, tente novamente.</p>
+    <div id="login-screen" style="display: none;">
+        <div id="loader">
+            <div class="spinner"></div>
+            <p id="login-status">Autenticando...</p>
+        </div>
+        <div id="queue-info" style="display: none;">
+            <p>Você está na fila</p>
+            <p>Posição: <span id="queue-position">-</span></p>
+            <p>Jogadores na fila: <span id="queue-total">-</span></p>
         </div>
     </div>
 
-    <!-- Game Container -->
-    <div id="game-container" style="display: none;">
-        <div id="main-frame-error" class="interstitial-wrapper"></div>
-        <canvas id="game-canvas"></canvas>
-    </div>
-    
-    <!-- UI Elements -->
-    <div id="queue-info" style="display: none;">
-        <p>Você está na fila. Posição: <span id="queueCount">...</span></p>
-    </div>
-    
-    <div id="player-info" style="display: none;">
-        <p>Você é o jogador da vez!</p>
-    </div>
+    <div id="game-container" style="display: none;"></div>
+    <div id="player-info" style="display: none;">Você está no controle</div>
+    <div id="waiting-banner" style="display: none;">Aguardando sua vez de jogar...</div>
 
-    <div id="waiting-banner" class="banner" style="display: none;">
-      Aguardando sua vez...
-    </div>
-
-    <!-- Touch Controls -->
-    <div id="touch-control" style="display: none;">
-        <div id="jump-btn"></div>
-    </div>
-
-    <!-- Sprites -->
-    <div style="display: none;">
-        <img id="offline-resources-light-1x" src="assets/default_100_percent/100-offline-sprite.png">
-        <img id="offline-resources-light-2x" src="assets/default_200_percent/200-offline-sprite.png">
-    </div>
-
-    <script src="renderer.js"></script>
-    <script src="index.js"></script>
+    <!-- Scripts do jogo -->
+    <script>
+        function updateLoaderStatus(text) {
+            const statusEl = document.getElementById('login-status');
+            if (statusEl) {
+                statusEl.textContent = text;
+            }
+        }
+    </script>
+    <script src="loader.js"></script>
+    <script src="main.js"></script>
     <script src="client.js"></script>
-    <script src="enhancements.js"></script>
 </body>
 </html>

@@ -1,164 +1,201 @@
+// Otimização do RankingSystem
+class RankingSystem {
+    constructor() {
+        this.players = [];
+        this.updateInterval = 10000; // Aumentado para 10 segundos para reduzir requisições
+        this.container = null;
+        this.isMinimized = false;
+        this.lastUpdate = 0;
+        this.throttleDelay = 1000; // Limitar atualizações a 1 por segundo
+    }
+
+    setContainer(containerElement) {
+        this.container = containerElement;
+    }
+
+    requestRanking() {
+        const now = Date.now();
+        if (now - this.lastUpdate < this.throttleDelay) return;
+
+        const socket = window.dinoClient?.ws; // Assuming dinoClient.ws is the WebSocket instance
+        if (socket && socket.readyState === WebSocket.OPEN) {
+            try {
+                socket.send(JSON.stringify({ type: 'get_ranking' }));
+                this.lastUpdate = now;
+            } catch (e) {
+                console.error('Failed to send ranking request:', e);
+            }
+        }
+    }
+
+    updateRanking(playersData) {
+        this.players = playersData;
+        this.render();
+    }
+
+    render() {
+        if (!this.container) return;
+
+        let content = this.container.querySelector('.ranking-content');
+        if (!content) {
+            content = document.createElement('div');
+            content.className = 'ranking-content';
+            this.container.appendChild(content);
+        }
+
+        // Usar DocumentFragment para melhor performance
+        const fragment = document.createDocumentFragment();
+        const topPlayers = this.players.slice(0, 5);
+
+        const title = document.createElement('h3');
+        title.textContent = 'Ranking';
+        title.style.cssText = 'margin: 0 0 10px 0; font-size: 16px; color: #4361ee;';
+        fragment.appendChild(title);
+
+        const ol = document.createElement('ol');
+        ol.style.cssText = 'margin: 0; padding-left: 20px;';
+
+        topPlayers.forEach((player, index) => {
+            const li = document.createElement('li');
+            li.style.cssText = `
+                margin-bottom: 5px;
+                display: flex;
+                justify-content: space-between;
+                ${index === 0 ? 'color: #FFD700; font-weight: bold;' : ''}
+                ${index === 1 ? 'color: #C0C0C0;' : ''}
+                ${index === 2 ? 'color: #CD7F32;' : ''}
+            `;
+            li.textContent = `${player.name}: ${player.highScore}`;
+            ol.appendChild(li);
+        });
+
+        fragment.appendChild(ol);
+        content.innerHTML = '';
+        content.appendChild(fragment);
+    }
+}
+
 class SpectatorMode {
     constructor(canvas, isActiveGame, playerName) {
         this.canvas = canvas;
-        this.renderer = new GameRenderer(canvas);
-        this.playerName = playerName;
+        this.ctx = canvas.getContext('2d');
         this.isActiveGame = isActiveGame;
-        
-        this.interpolationBuffer = [];
-        this.lastRenderedState = null;
-        this.lastUpdateTime = 0;
+        this.playerName = playerName;
 
-        this.imageSprite = null;
-        this.spriteDef = null;
+        // Adicionar efeitos visuais
+        this.effects = {
+            particles: [],
+            maxParticles: 50
+        };
 
-        this.loadResources();
-        this.renderLoop();
+        // Configurar canvas para melhor qualidade visual
+        this.setupCanvas();
+        this.loadResources(); // Placeholder for resource loading
+    }
+
+    setupCanvas() {
+        // Ajustar para resolução do dispositivo
+        const dpr = window.devicePixelRatio || 1;
+        this.canvas.width = this.canvas.clientWidth * dpr;
+        this.canvas.height = this.canvas.clientHeight * dpr;
+        this.ctx.scale(dpr, dpr);
+
+        // Ativar antialiasing
+        this.ctx.imageSmoothingEnabled = true;
+        this.ctx.imageSmoothingQuality = 'high';
     }
 
     loadResources() {
-        const IS_HIDPI = window.devicePixelRatio > 1;
-        this.imageSprite = new Image();
-        const spriteId = IS_HIDPI ? 'offline-resources-light-2x' : 'offline-resources-light-1x';
-        const localSprite = document.getElementById(spriteId);
-
-        this.imageSprite.onload = () => {
-            this.spriteDef = IS_HIDPI ? Runner.spriteDefinition.HDPI : Runner.spriteDefinition.LDPI;
-            this.renderer.setResources(this.imageSprite, this.spriteDef);
-        };
-        this.imageSprite.onerror = () => {
-            this.imageSprite.src = IS_HIDPI ? 'https://raw.githubusercontent.com/wayou/t-rex-runner/master/assets/sprite-runner-2x.png' : 'https://raw.githubusercontent.com/wayou/t-rex-runner/master/assets/sprite-runner.png';
-        };
-
-        if (localSprite && localSprite.src) {
-            this.imageSprite.src = localSprite.src;
-        } else {
-            this.imageSprite.onerror();
-        }
-    }
-
-    updateGameState(compressedState) {
-        if (!compressedState) return;
-        const newState = {
-            dino: {
-                x: compressedState.d.x,
-                y: compressedState.d.y,
-                isDucking: compressedState.d.d === 1,
-                status: compressedState.d.s || 'RUNNING'
-            },
-            obstacles: compressedState.o.map(obs => ({
-                x: obs.x,
-                y: obs.y,
-                width: obs.w,
-                height: obs.h,
-                type: obs.t || 'CACTUS_SMALL'
-            })),
-            score: compressedState.s,
-            gameOver: compressedState.g === 1,
-            timestamp: Date.now()
-        };
-
-        this.interpolationBuffer.push(newState);
-        if (this.interpolationBuffer.length > 10) {
-            this.interpolationBuffer.shift();
-        }
-        this.lastUpdateTime = Date.now();
-    }
-
-    getInterpolatedState() {
-        if (this.interpolationBuffer.length < 2) {
-            return this.interpolationBuffer[0] || this.lastRenderedState;
-        }
-
-        const renderTime = Date.now() - (1000 / 60); // Target 60fps render timestamp
-
-        let prevState = null;
-        let nextState = null;
-
-        for (let i = this.interpolationBuffer.length - 1; i >= 1; i--) {
-            if (this.interpolationBuffer[i].timestamp >= renderTime && this.interpolationBuffer[i-1].timestamp <= renderTime) {
-                prevState = this.interpolationBuffer[i-1];
-                nextState = this.interpolationBuffer[i];
-                break;
-            }
-        }
-
-        if (!prevState) return this.interpolationBuffer[this.interpolationBuffer.length - 1];
-
-        const alpha = (renderTime - prevState.timestamp) / (nextState.timestamp - prevState.timestamp);
-
-        const interpolated = { ...nextState }; // Clone nextState
-        interpolated.dino = { ...nextState.dino };
-
-        interpolated.dino.x = prevState.dino.x + (nextState.dino.x - prevState.dino.x) * alpha;
-        interpolated.dino.y = prevState.dino.y + (nextState.dino.y - prevState.dino.y) * alpha;
-
-        return interpolated;
-    }
-
-    renderLoop() {
-        const currentState = this.getInterpolatedState();
-        if (currentState) {
-            this.renderGameState(currentState);
-            this.lastRenderedState = currentState;
-        }
-        requestAnimationFrame(() => this.renderLoop());
+        // Placeholder: In a real scenario, load images, sounds, etc.
+        console.log('Loading spectator mode resources...');
     }
 
     renderGameState(state) {
-        if (!this.renderer || !this.spriteDef) return;
+        // Limpar canvas com fade
+        this.ctx.fillStyle = 'rgba(247, 247, 247, 0.9)';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-        this.renderer.clear();
-        this.renderer.drawBackground();
+        // Renderizar efeitos de parallax (Placeholder)
+        this.renderParallaxBackground();
 
-        const groundY = this.canvas.height - (window.devicePixelRatio > 1 ? 40 : 20);
+        // Renderizar dinossauro com sombra (Placeholder)
+        this.ctx.save();
+        this.ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
+        this.ctx.shadowBlur = 5;
+        this.ctx.shadowOffsetY = 2;
+        this.renderDino(state.tRex);
+        this.ctx.restore();
 
-        // Desenha chão
-        const groundWidth = this.spriteDef.HORIZON.width;
-        const groundPatterns = Math.ceil(this.canvas.width / groundWidth) + 1;
-        for (let i = 0; i < groundPatterns; i++) {
-            this.renderer.drawGround(
-                groundY,
-                this.spriteDef.HORIZON,
-                (state.groundX || 0) + (i * groundWidth)
-            );
+        // Renderizar obstáculos com efeitos (Placeholder)
+        state.obstacles.forEach(obs => {
+            this.renderObstacle(obs);
+        });
+
+        // Renderizar partículas
+        this.updateAndRenderParticles();
+
+        // UI com estilo moderno
+        this.renderUI(state);
+    }
+
+    renderParallaxBackground() {
+        // Placeholder for parallax background rendering
+        // console.log('Rendering parallax background');
+    }
+
+    renderDino(tRexState) {
+        // Placeholder for dino rendering
+        // console.log('Rendering dino:', tRexState);
+    }
+
+    renderObstacle(obstacleState) {
+        // Placeholder for obstacle rendering
+        // console.log('Rendering obstacle:', obstacleState);
+    }
+
+    updateAndRenderParticles() {
+        // Placeholder for particle effects
+        // console.log('Updating and rendering particles');
+    }
+
+    renderUI(state) {
+        // Score com efeito de gradiente
+        const score = Math.floor(state.distance);
+        this.ctx.save();
+        const gradient = this.ctx.createLinearGradient(0, 0, 200, 0);
+        gradient.addColorStop(0, '#4361ee');
+        gradient.addColorStop(1, '#3f37c9');
+        this.ctx.fillStyle = gradient;
+        this.ctx.font = 'bold 24px Arial';
+        this.ctx.fillText(`Score: ${score}`, 20, 40);
+
+        // Nome do jogador com estilo
+        this.ctx.font = '18px Arial';
+        this.ctx.fillStyle = '#2b2d42';
+        this.ctx.fillText(this.playerName, 20, 70);
+        this.ctx.restore();
+
+        // Game Over com animação
+        if (state.crashed) {
+            this.renderGameOver(score);
         }
+    }
 
-        // Desenha dinossauro
-        const tRex = state.dino;
-        if (tRex) {
-            const anim = Runner.animFrames[tRex.status];
-            if (anim) {
-                const animTime = Date.now() - (tRex.animStartTime || 0);
-                const frameIndex = Math.floor(animTime / anim.msPerFrame) % anim.frames.length;
-                const sourceX = anim.frames[frameIndex];
-                const isDucking = tRex.status === 'DUCKING';
-                const dinoWidth = isDucking ? Runner.trexConfig.WIDTH_DUCK : Runner.trexConfig.WIDTH;
-                const dinoHeight = Runner.trexConfig.HEIGHT;
-                const dinoY = groundY - dinoHeight - (tRex.y || 0);
-                this.renderer.drawDino(tRex.x, dinoY, dinoWidth, dinoHeight, this.spriteDef.TREX, sourceX);
-            }
-        }
+    renderGameOver(score) {
+        this.ctx.save();
+        // Fundo semi-transparente
+        this.ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
 
-        // Desenha obstáculos
-        if (state.obstacles) {
-            state.obstacles.forEach(obs => {
-                const obsY = groundY - obs.height;
-                const sprite = this.spriteDef[obs.type];
-                if (sprite) {
-                    this.renderer.drawObstacle(obs.x, obsY, obs.width, obs.height, sprite);
-                }
-            });
-        }
+        // Texto do Game Over
+        this.ctx.textAlign = 'center';
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.font = 'bold 36px Arial';
+        this.ctx.fillText('Game Over', this.canvas.width / 2, this.canvas.height / 2 - 30);
 
-        // Desenha UI
-        this.renderer.drawScore(Math.floor(state.score || 0));
-        this.renderer.drawPlayerName(this.playerName);
-        
-        if (state.gameOver) {
-            this.renderer.drawGameOver(Math.floor(state.score || 0));
-        }
-
-        this.renderer.renderToScreen();
+        // Pontuação final
+        this.ctx.font = '24px Arial';
+        this.ctx.fillText(`Final Score: ${score}`, this.canvas.width / 2, this.canvas.height / 2 + 20);
+        this.ctx.restore();
     }
 }

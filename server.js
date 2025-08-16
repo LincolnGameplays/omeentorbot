@@ -33,7 +33,63 @@ import {
 import { REST } from '@discordjs/rest';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { HeadlessRunner } from './public/game-logic.js'; // Import the new game logic
+// import { Runner } from './public/game-logic.js'; // Import the new game logic (renamed from HeadlessRunner)
+
+// Sistema de validação de inputs
+class InputValidator {
+    constructor() {
+        this.inputHistory = new Map();
+        this.MIN_INPUT_DELAY = 16; // ~60fps
+        this.MAX_INPUTS_PER_SECOND = 70;
+        this.inputCounts = new Map();
+        this.lastCleanup = Date.now();
+    }
+
+    validate(playerId, input) {
+        const now = Date.now();
+        
+        // Limpar contadores antigos
+        if (now - this.lastCleanup > 1000) {
+            this.cleanupCounters();
+            this.lastCleanup = now;
+        }
+
+        // Verificar delay entre inputs
+        const lastInput = this.inputHistory.get(playerId);
+        if (lastInput && now - lastInput < this.MIN_INPUT_DELAY) {
+            throw new Error('Input too fast');
+        }
+
+        // Verificar quantidade de inputs por segundo
+        const count = this.inputCounts.get(playerId) || 0;
+        if (count > this.MAX_INPUTS_PER_SECOND) {
+            throw new Error('Too many inputs');
+        }
+
+        // Validar tipo de input
+        if (!this.isValidInput(input)) {
+            throw new Error('Invalid input type');
+        }
+
+        // Atualizar histórico
+        this.inputHistory.set(playerId, now);
+        this.inputCounts.set(playerId, count + 1);
+
+        return true;
+    }
+
+    isValidInput(input) {
+        const validTypes = ['jump', 'duck'];
+        const validActions = ['keydown', 'keyup'];
+        
+        return validTypes.includes(input.cmd) && 
+               validActions.includes(input.action);
+    }
+
+    cleanupCounters() {
+        this.inputCounts.clear();
+    }
+}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -171,6 +227,11 @@ const SCORE_KEY = 'user_scores'; // Redis hash key
 const LEADERBOARD_KEY = 'leaderboard_top3';
 const LEADERBOARD_MSG_ID_KEY = 'leaderboard_msg_id';
 
+// Caching for ranking data
+let cachedRankingData = null;
+let lastRankingCacheTime = 0;
+const RANKING_CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+
 async function setUserBestScore(discordId, score) {
   if (USE_REDIS) {
     await redis.hset(SCORE_KEY, discordId, score);
@@ -178,6 +239,7 @@ async function setUserBestScore(discordId, score) {
     memory.userScores = memory.userScores || new Map();
     memory.userScores.set(discordId, score);
   }
+  cachedRankingData = null; // Invalidate cache on score update
 }
 
 async function getUserBestScore(discordId) {
@@ -319,6 +381,7 @@ app.get('/dino', (req, res) => {
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 const wsClients = new Map();
+const inputValidator = new InputValidator(); // Instantiate InputValidator
 
 function broadcastAll(obj) {
   const s = JSON.stringify(obj);
@@ -338,8 +401,9 @@ async function setActivePlayer(tokenId) {
     const entry = await getTokenEntry(tokenId);
     if (entry) {
         // Don't start the game immediately. Wait for the client to be ready.
-        activeGame = new HeadlessRunner(); 
-        activeGame.playing = false; // Ensure game doesn't start updating
+        // activeGame = new Runner(); // Use Runner (renamed from HeadlessRunner)
+        // activeGame.playing = false; // Ensure game doesn't start updating
+        activeGame = { update: () => {}, getState: () => ({ crashed: false, distance: 0 }), handleInput: () => {}, handleKeyUp: () => {} }; // Placeholder for server-side game logic
         broadcastAll({ type: 'activePlayerChange', activePlayerToken, isActiveGame: true, playerName: entry.username });
         console.log(`Player ${entry.username} is now active. Waiting for client to be ready...`);
     } else {
@@ -359,7 +423,7 @@ function startGameLoop() {
 
     gameLoopInterval = setInterval(async () => {
         if (activeGame && activeGame.playing) {
-            activeGame.update();
+            // activeGame.update(performance.now()); // Server-side game logic is currently disabled
             const gameState = activeGame.getState();
             broadcastAll({ type: 'gameState', state: gameState });
 
@@ -379,7 +443,24 @@ wss.on('connection', (ws) => {
     let msg;
     try { msg = JSON.parse(raw); } catch { return; }
 
+    // Input Validation
     if (msg.type === 'login') {
+        if (typeof msg.jwt !== 'string' || !msg.jwt) {
+            console.warn('Invalid login message: missing or invalid jwt');
+            ws.send(JSON.stringify({ type: 'loginResult', success: false }));
+            return;
+        }
+        if (typeof msg.clientTime !== 'number') {
+            console.warn('Invalid login message: missing or invalid clientTime');
+            ws.send(JSON.stringify({ type: 'loginResult', success: false }));
+            return;
+        }
+        if (!msg.resolution || typeof msg.resolution.width !== 'number' || typeof msg.resolution.height !== 'number' || typeof msg.resolution.dpr !== 'number') {
+            console.warn('Invalid login message: missing or invalid resolution');
+            ws.send(JSON.stringify({ type: 'loginResult', success: false }));
+            return;
+        }
+
         let tokenToVerify = msg.jwt;
         let isStaticAdminToken = false;
 
@@ -434,6 +515,7 @@ wss.on('connection', (ws) => {
             }));
 
         } catch (e) {
+            console.error('JWT verification failed:', e);
             ws.send(JSON.stringify({ type: 'loginResult', success: false }));
         }
     }
@@ -442,11 +524,17 @@ wss.on('connection', (ws) => {
       const info = wsClients.get(ws);
       if (!info?.tokenId || info.tokenId !== activePlayerToken || !activeGame) return;
       
-      // Apply input to the server-side game instance
-      if (msg.action === 'keydown') {
-          activeGame.handleInput(msg.cmd);
-      } else if (msg.action === 'keyup') {
-          activeGame.handleKeyUp(msg.cmd);
+      try {
+          inputValidator.validate(info.tokenId, msg); // Validate input
+          // Apply input to the server-side game instance
+          // if (msg.action === 'keydown') {
+          //     activeGame.handleInput(msg.cmd);
+          // } else if (msg.action === 'keyup') {
+          //     activeGame.handleKeyUp(msg.cmd);
+          // }
+      } catch (error) {
+          console.warn(`Invalid input from player ${info.tokenId}:`, error.message);
+          ws.send(JSON.stringify({ type: 'error', message: 'Invalid input' }));
       }
     }
 
@@ -459,6 +547,12 @@ wss.on('connection', (ws) => {
     }
 
     if (msg.type === 'get_ranking') {
+      const now = Date.now();
+      if (cachedRankingData && (now - lastRankingCacheTime < RANKING_CACHE_DURATION)) {
+        ws.send(JSON.stringify({ type: 'rankingUpdate', players: cachedRankingData }));
+        return;
+      }
+
       const allScores = await getAllUserScores();
       const players = [];
       for (const entry of allScores) {
@@ -469,11 +563,52 @@ wss.on('connection', (ws) => {
       }
       // Sort by highScore descending
       players.sort((a, b) => b.highScore - a.highScore);
+      cachedRankingData = players; // Cache the data
+      lastRankingCacheTime = now; // Update cache time
       ws.send(JSON.stringify({ type: 'rankingUpdate', players: players }));
     }
     // The 'death' message from the client is now ignored, as the server determines death.
   });
-  ws.on('close', () => wsClients.delete(ws));
+  ws.on('close', async () => {
+    const client = wsClients.get(ws);
+    if (client && client.tokenId) {
+      const q = await getQueue();
+      const playerIndex = q.findIndex(entry => entry.tokenId === client.tokenId);
+      if (playerIndex !== -1) {
+        q.splice(playerIndex, 1);
+        await setQueue(q);
+        await delTokenEntry(client.tokenId);
+        console.log(`Player with token ${client.tokenId} disconnected and was removed from the queue.`);
+        await notifyQueuePositionChange();
+        if (client.tokenId === activePlayerToken) {
+          if (q.length > 0) {
+            const nextPlayer = q[0];
+            console.log('Next player:', nextPlayer.username);
+            if (!nextPlayer.notified) {
+              try {
+                const user = await discordClient.users.fetch(nextPlayer.discordId);
+                const jwtToken = makeJwtForToken(nextPlayer.tokenId);
+                const gameLink = `${PUBLIC_URL}?token=${encodeURIComponent(jwtToken)}`;
+                await user.send(`🎮 Sua vez de jogar! Clique aqui: ${gameLink}`);
+                console.log(`Notified and activated token for next player: ${nextPlayer.username}`);
+                nextPlayer.notified = true;
+                await setQueue(q);
+                setActivePlayer(nextPlayer.tokenId);
+              } catch (e) {
+                console.warn(`Could not activate token for next player ${nextPlayer.username}:`, e);
+              }
+            } else {
+              setActivePlayer(nextPlayer.tokenId);
+            }
+          } else {
+            console.log('Queue is empty.');
+            setActivePlayer(null);
+          }
+        }
+      }
+    }
+    wsClients.delete(ws);
+  });
 });
 
 async function handlePlayerDeath(tokenId, score) {
@@ -522,6 +657,8 @@ async function handlePlayerDeath(tokenId, score) {
                 }
                 players.sort((a, b) => b.highScore - a.highScore);
                 broadcastAll({ type: 'rankingUpdate', players: players });
+                cachedRankingData = players; // Invalidate and update cache on leaderboard change
+                lastRankingCacheTime = Date.now();
             }
         }
     }
@@ -620,16 +757,16 @@ async function handlePlayerDeath(tokenId, score) {
 const PRODUCT_CATALOG = [
   {
     id: 'player_ferro',
-    title: '🛡️ Jogador | Ferro',
-    priceCents: 990, // R$9,90
+    title: '🛡️ Jogador | FERRO',
+    priceCents: 390, // R$5,90
     short: 'Entrada padrão na fila — sem prioridade. Ótimo para quem quer só jogar.',
     deliveryText: 'Ao confirmar o pagamento você será adicionado à fila normalmente (sem prioridade).',
     priority: 'ferro'
   },
   {
     id: 'player_ouro',
-    title: '🏅 Jogador | Ouro',
-    priceCents: 1590, // R$15,90
+    title: '🏅 Jogador | OURO',
+    priceCents: 990, // R$9,90
     short: 'Prioridade média — reduz o tempo de espera significativamente.',
     deliveryText: 'Você receberá prioridade moderada — será inserido alguns lugares à frente dependendo do fluxo.',
     priority: 'ouro'
@@ -637,7 +774,7 @@ const PRODUCT_CATALOG = [
   {
     id: 'player_star',
     title: '🌟 Jogador | STAR',
-    priceCents: 2990, // R$29,90
+    priceCents: 1590, // R$15,90
     short: 'Prioridade máxima — você vira o próximo a jogar.',
     deliveryText: 'Prioridade máxima. Após confirmação de pagamento você será o próximo a jogar — prioridade garantida.',
     priority: 'star'
@@ -985,6 +1122,22 @@ async function notifyQueuePositionChange() {
     const entry = q[i];
     const currentPosition = i + 1; // 1-based position
 
+    // Notify via WebSocket
+    for (const [ws, client] of wsClients.entries()) {
+      if (client.tokenId === entry.tokenId) {
+        try {
+          ws.send(JSON.stringify({
+            type: 'queueUpdate',
+            inQueue: true,
+            position: currentPosition,
+            total: q.length
+          }));
+        } catch (e) {
+          console.warn(`Could not send queue update to ${entry.username}`, e);
+        }
+      }
+    }
+
     if (!entry.privateChannelId) {
       console.warn(`Entry for ${entry.username} (ID: ${entry.discordId}) does not have a privateChannelId.`);
       continue;
@@ -1013,6 +1166,8 @@ async function notifyQueuePositionChange() {
       }
     }
   }
+  // Also broadcast to all clients that the queue has been updated, so they can hide the queue info if they are not in it
+  broadcastAll({ type: 'queueUpdated' });
 }
 let queueTestInterval = null;
 
